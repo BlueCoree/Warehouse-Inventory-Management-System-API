@@ -72,7 +72,6 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Verify user still exists
 		var user models.User
 		if err := config.DB.First(&user, claims.UserID).Error; err != nil {
 			ErrorResponse(w, http.StatusUnauthorized, "User not found")

@@ -7,6 +7,7 @@ import (
 	"tecnhical-test/models"
 
 	"github.com/gorilla/mux"
+	"gorm.io/gorm"
 )
 
 type StokResponse struct {
@@ -20,6 +21,7 @@ type StokResponse struct {
 type HistoryStokResponse struct {
 	ID             uint   `json:"id"`
 	BarangID       uint   `json:"barang_id"`
+	NamaBarang     string `json:"nama_barang"`
 	UserID         uint   `json:"user_id"`
 	JenisTransaksi string `json:"jenis_transaksi"`
 	Jumlah         int    `json:"jumlah"`
@@ -83,7 +85,9 @@ func GetStokByBarang(w http.ResponseWriter, r *http.Request) {
 func GetHistoryStok(w http.ResponseWriter, r *http.Request) {
 	var histories []models.HistoryStok
 
-	if err := config.DB.Preload("Barang").Preload("User").Order("created_at DESC").Find(&histories).Error; err != nil {
+	if err := config.DB.Preload("Barang", func(db *gorm.DB) *gorm.DB {
+		return db.Unscoped()
+	}).Preload("User").Order("created_at DESC").Find(&histories).Error; err != nil {
 		middlewares.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch data")
 		return
 	}
@@ -93,6 +97,7 @@ func GetHistoryStok(w http.ResponseWriter, r *http.Request) {
 		result := HistoryStokResponse{
 			ID:             h.ID,
 			BarangID:       h.BarangID,
+			NamaBarang:     h.NamaBarang,
 			UserID:         h.UserID,
 			JenisTransaksi: h.JenisTransaksi,
 			Jumlah:         h.Jumlah,
@@ -101,8 +106,16 @@ func GetHistoryStok(w http.ResponseWriter, r *http.Request) {
 			Keterangan:     h.Keterangan,
 			CreatedAt:      h.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
-		result.Barang.KodeBarang = h.Barang.KodeBarang
-		result.Barang.NamaBarang = h.Barang.NamaBarang
+		if h.Barang.ID != 0 {
+			result.Barang.KodeBarang = h.Barang.KodeBarang
+			result.Barang.NamaBarang = h.Barang.NamaBarang
+
+			if result.NamaBarang == "" {
+				result.NamaBarang = h.Barang.NamaBarang
+			}
+		} else {
+			result.Barang.NamaBarang = h.NamaBarang
+		}
 		result.User.Username = h.User.Username
 		result.User.Fullname = h.User.Fullname
 
@@ -123,7 +136,9 @@ func GetHistoryByBarang(w http.ResponseWriter, r *http.Request) {
 
 	var histories []models.HistoryStok
 
-	if err := config.DB.Preload("Barang").Preload("User").
+	if err := config.DB.Preload("Barang", func(db *gorm.DB) *gorm.DB {
+		return db.Unscoped()
+	}).Preload("User").
 		Where("barang_id = ?", barangID).
 		Order("created_at DESC").
 		Find(&histories).Error; err != nil {
@@ -136,6 +151,7 @@ func GetHistoryByBarang(w http.ResponseWriter, r *http.Request) {
 		result := HistoryStokResponse{
 			ID:             h.ID,
 			BarangID:       h.BarangID,
+			NamaBarang:     h.NamaBarang,
 			UserID:         h.UserID,
 			JenisTransaksi: h.JenisTransaksi,
 			Jumlah:         h.Jumlah,
@@ -144,8 +160,17 @@ func GetHistoryByBarang(w http.ResponseWriter, r *http.Request) {
 			Keterangan:     h.Keterangan,
 			CreatedAt:      h.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		}
-		result.Barang.KodeBarang = h.Barang.KodeBarang
-		result.Barang.NamaBarang = h.Barang.NamaBarang
+
+		if h.Barang.ID != 0 {
+			result.Barang.KodeBarang = h.Barang.KodeBarang
+			result.Barang.NamaBarang = h.Barang.NamaBarang
+
+			if result.NamaBarang == "" {
+				result.NamaBarang = h.Barang.NamaBarang
+			}
+		} else {
+			result.Barang.NamaBarang = h.NamaBarang
+		}
 		result.User.Username = h.User.Username
 		result.User.Fullname = h.User.Fullname
 

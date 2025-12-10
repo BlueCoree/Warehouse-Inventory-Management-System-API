@@ -30,12 +30,13 @@ type PenjualanResponse struct {
 }
 
 type PenjualanDetailResponse struct {
-	ID       uint    `json:"id"`
-	BarangID uint    `json:"barang_id"`
-	Qty      int     `json:"qty"`
-	Harga    float64 `json:"harga"`
-	Subtotal float64 `json:"subtotal"`
-	Barang   struct {
+	ID         uint    `json:"id"`
+	BarangID   uint    `json:"barang_id"`
+	NamaBarang string  `json:"nama_barang"`
+	Qty        int     `json:"qty"`
+	Harga      float64 `json:"harga"`
+	Subtotal   float64 `json:"subtotal"`
+	Barang     struct {
 		KodeBarang string `json:"kode_barang"`
 		NamaBarang string `json:"nama_barang"`
 		Satuan     string `json:"satuan"`
@@ -62,7 +63,6 @@ func CreatePenjualan(w http.ResponseWriter, r *http.Request) {
 
 	tx := config.DB.Begin()
 
-	// Validate stock availability first
 	for _, detail := range req.Details {
 		var stok models.MStok
 		if err := tx.Where("barang_id = ?", detail.BarangID).First(&stok).Error; err != nil {
@@ -78,7 +78,6 @@ func CreatePenjualan(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Calculate total
 	var total float64
 	for _, detail := range req.Details {
 		subtotal := float64(detail.Qty) * detail.Harga
@@ -89,7 +88,6 @@ func CreatePenjualan(w http.ResponseWriter, r *http.Request) {
 		req.Status = "selesai"
 	}
 
-	// Create header
 	header := models.JualHeader{
 		NoFaktur: req.NoFaktur,
 		Customer: req.Customer,
@@ -104,11 +102,9 @@ func CreatePenjualan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create details and update stock
 	for _, detail := range req.Details {
 		subtotal := float64(detail.Qty) * detail.Harga
 
-		// Validate barang exists
 		var barang models.MasterBarang
 		if err := tx.First(&barang, detail.BarangID).Error; err != nil {
 			tx.Rollback()
@@ -116,10 +112,10 @@ func CreatePenjualan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Create detail
 		jualDetail := models.JualDetail{
 			JualHeaderID: header.ID,
 			BarangID:     detail.BarangID,
+			NamaBarang:   barang.NamaBarang,
 			Qty:          detail.Qty,
 			Harga:        detail.Harga,
 			Subtotal:     subtotal,
@@ -131,7 +127,6 @@ func CreatePenjualan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Update stock
 		var stok models.MStok
 		if err := tx.Where("barang_id = ?", detail.BarangID).First(&stok).Error; err != nil {
 			tx.Rollback()
@@ -148,9 +143,9 @@ func CreatePenjualan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Create history
 		history := models.HistoryStok{
 			BarangID:       detail.BarangID,
+			NamaBarang:     barang.NamaBarang,
 			UserID:         userClaims.UserID,
 			JenisTransaksi: "keluar",
 			Jumlah:         detail.Qty,
@@ -168,7 +163,6 @@ func CreatePenjualan(w http.ResponseWriter, r *http.Request) {
 
 	tx.Commit()
 
-	// Reload header with details
 	config.DB.Preload("Details.Barang").Preload("User").First(&header, header.ID)
 
 	middlewares.SuccessResponse(w, "Penjualan created successfully", header)
@@ -198,15 +192,24 @@ func GetDetailPenjualan(w http.ResponseWriter, r *http.Request) {
 	var details []PenjualanDetailResponse
 	for _, d := range header.Details {
 		detail := PenjualanDetailResponse{
-			ID:       d.ID,
-			BarangID: d.BarangID,
-			Qty:      d.Qty,
-			Harga:    d.Harga,
-			Subtotal: d.Subtotal,
+			ID:         d.ID,
+			BarangID:   d.BarangID,
+			NamaBarang: d.NamaBarang,
+			Qty:        d.Qty,
+			Harga:      d.Harga,
+			Subtotal:   d.Subtotal,
 		}
-		detail.Barang.KodeBarang = d.Barang.KodeBarang
-		detail.Barang.NamaBarang = d.Barang.NamaBarang
-		detail.Barang.Satuan = d.Barang.Satuan
+		if d.Barang.ID != 0 {
+			detail.Barang.KodeBarang = d.Barang.KodeBarang
+			detail.Barang.NamaBarang = d.Barang.NamaBarang
+			detail.Barang.Satuan = d.Barang.Satuan
+
+			if detail.NamaBarang == "" {
+				detail.NamaBarang = d.Barang.NamaBarang
+			}
+		} else {
+			detail.Barang.NamaBarang = d.NamaBarang
+		}
 
 		details = append(details, detail)
 	}

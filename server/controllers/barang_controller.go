@@ -19,6 +19,7 @@ type CreateBarangRequest struct {
 	Satuan     string  `json:"satuan"`
 	HargaBeli  float64 `json:"harga_beli"`
 	HargaJual  float64 `json:"harga_jual"`
+	StokAkhir  int     `json:"stok_akhir"`
 }
 
 type BarangWithStok struct {
@@ -74,19 +75,21 @@ func GetBarang(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetBarangStok(w http.ResponseWriter, r *http.Request) {
-	var results []BarangWithStok
-
-	query := `
-		SELECT mb.*, COALESCE(ms.stok_akhir, 0) as stok_akhir
-		FROM master_barangs mb
-		LEFT JOIN m_stocks ms ON mb.id = ms.barang_id AND ms.deleted_at IS NULL
-		WHERE mb.deleted_at IS NULL
-		ORDER BY mb.id
-	`
-
-	if err := config.DB.Raw(query).Scan(&results).Error; err != nil {
+	var barang []models.MasterBarang
+	if err := config.DB.Find(&barang).Error; err != nil {
 		middlewares.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch data")
 		return
+	}
+
+	var results []BarangWithStok
+	for _, b := range barang {
+		var stok models.MStok
+		config.DB.Where("barang_id = ?", b.ID).First(&stok)
+
+		results = append(results, BarangWithStok{
+			MasterBarang: b,
+			StokAkhir:    stok.StokAkhir,
+		})
 	}
 
 	middlewares.SuccessResponse(w, "Data retrieved successfully", results)
@@ -147,10 +150,10 @@ func CreateBarang(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Initialize stock
+	// Init stok
 	stok := models.MStok{
 		BarangID:  barang.ID,
-		StokAkhir: 0,
+		StokAkhir: req.StokAkhir,
 	}
 
 	if err := tx.Create(&stok).Error; err != nil {
@@ -191,10 +194,28 @@ func UpdateBarang(w http.ResponseWriter, r *http.Request) {
 	barang.HargaBeli = req.HargaBeli
 	barang.HargaJual = req.HargaJual
 
-	if err := config.DB.Save(&barang).Error; err != nil {
+	tx := config.DB.Begin()
+
+	if err := tx.Save(&barang).Error; err != nil {
+		tx.Rollback()
 		middlewares.ErrorResponse(w, http.StatusInternalServerError, "Failed to update barang")
 		return
 	}
+
+	// Update stok
+	var stok models.MStok
+	if err := tx.Where("barang_id = ?", barang.ID).First(&stok).Error; err == nil {
+		stok.StokAkhir = req.StokAkhir
+		tx.Save(&stok)
+	} else {
+		newStok := models.MStok{
+			BarangID:  barang.ID,
+			StokAkhir: req.StokAkhir,
+		}
+		tx.Create(&newStok)
+	}
+
+	tx.Commit()
 
 	middlewares.SuccessResponse(w, "Barang updated successfully", barang)
 }

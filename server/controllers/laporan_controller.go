@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"tecnhical-test/config"
 	"tecnhical-test/middlewares"
+	"tecnhical-test/models"
+
+	"gorm.io/gorm"
 )
 
 type LaporanStokItem struct {
@@ -16,63 +19,84 @@ type LaporanStokItem struct {
 	HargaBeli  float64 `json:"harga_beli"`
 	HargaJual  float64 `json:"harga_jual"`
 	NilaiStok  float64 `json:"nilai_stok"`
+	Deleted    bool    `json:"deleted"`
 }
 
 type LaporanPenjualanItem struct {
-	ID         uint    `json:"id"`
-	NoFaktur   string  `json:"no_faktur"`
-	Customer   string  `json:"customer"`
-	Total      float64 `json:"total"`
-	Status     string  `json:"status"`
-	CreatedAt  string  `json:"created_at"`
-	Username   string  `json:"username"`
-	TotalItems int     `json:"total_items"`
+	ID         uint                         `json:"id"`
+	NoFaktur   string                       `json:"no_faktur"`
+	Customer   string                       `json:"customer"`
+	Total      float64                      `json:"total"`
+	Status     string                       `json:"status"`
+	CreatedAt  string                       `json:"created_at"`
+	Username   string                       `json:"username"`
+	TotalItems int                          `json:"total_items"`
+	Details    []LaporanPenjualanDetailItem `json:"details"`
+}
+
+type LaporanPenjualanDetailItem struct {
+	NamaBarang string  `json:"nama_barang"`
+	Qty        int     `json:"qty"`
+	Harga      float64 `json:"harga"`
+	Subtotal   float64 `json:"subtotal"`
 }
 
 type LaporanPembelianItem struct {
-	ID         uint    `json:"id"`
-	NoFaktur   string  `json:"no_faktur"`
-	Supplier   string  `json:"supplier"`
-	Total      float64 `json:"total"`
-	Status     string  `json:"status"`
-	CreatedAt  string  `json:"created_at"`
-	Username   string  `json:"username"`
-	TotalItems int     `json:"total_items"`
+	ID         uint                         `json:"id"`
+	NoFaktur   string                       `json:"no_faktur"`
+	Supplier   string                       `json:"supplier"`
+	Total      float64                      `json:"total"`
+	Status     string                       `json:"status"`
+	CreatedAt  string                       `json:"created_at"`
+	Username   string                       `json:"username"`
+	TotalItems int                          `json:"total_items"`
+	Details    []LaporanPembelianDetailItem `json:"details"`
+}
+
+type LaporanPembelianDetailItem struct {
+	NamaBarang string  `json:"nama_barang"`
+	Qty        int     `json:"qty"`
+	Harga      float64 `json:"harga"`
+	Subtotal   float64 `json:"subtotal"`
 }
 
 func LaporanStokAkhir(w http.ResponseWriter, r *http.Request) {
-	var results []LaporanStokItem
-
-	query := `
-		SELECT 
-			ms.id,
-			ms.barang_id,
-			mb.kode_barang,
-			mb.nama_barang,
-			mb.satuan,
-			ms.stok_akhir,
-			mb.harga_beli,
-			mb.harga_jual,
-			(ms.stok_akhir * mb.harga_beli) as nilai_stok
-		FROM m_stocks ms
-		JOIN master_barangs mb ON ms.barang_id = mb.id
-		WHERE ms.deleted_at IS NULL AND mb.deleted_at IS NULL
-		ORDER BY mb.nama_barang
-	`
-
-	if err := config.DB.Raw(query).Scan(&results).Error; err != nil {
+	var stoks []models.MStok
+	if err := config.DB.Preload("Barang", func(db *gorm.DB) *gorm.DB {
+		return db.Unscoped()
+	}).Find(&stoks).Error; err != nil {
 		middlewares.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch data")
 		return
 	}
 
+	var results []LaporanStokItem
 	var totalNilai float64
-	for _, item := range results {
-		totalNilai += item.NilaiStok
+	var activeCount int
+
+	for _, s := range stoks {
+		nilaiStok := float64(s.StokAkhir) * s.Barang.HargaBeli
+		isDeleted := s.Barang.DeletedAt.Valid
+		results = append(results, LaporanStokItem{
+			ID:         s.ID,
+			BarangID:   s.BarangID,
+			KodeBarang: s.Barang.KodeBarang,
+			NamaBarang: s.Barang.NamaBarang,
+			Satuan:     s.Barang.Satuan,
+			StokAkhir:  s.StokAkhir,
+			HargaBeli:  s.Barang.HargaBeli,
+			HargaJual:  s.Barang.HargaJual,
+			NilaiStok:  nilaiStok,
+			Deleted:    isDeleted,
+		})
+		if !isDeleted {
+			totalNilai += nilaiStok
+			activeCount++
+		}
 	}
 
 	response := map[string]interface{}{
 		"data":        results,
-		"total_items": len(results),
+		"total_items": activeCount,
 		"total_nilai": totalNilai,
 	}
 
@@ -83,23 +107,46 @@ func LaporanPenjualan(w http.ResponseWriter, r *http.Request) {
 	startDate := r.URL.Query().Get("start_date")
 	endDate := r.URL.Query().Get("end_date")
 
-	query := config.DB.Table("jual_headers jh").
-		Select(`jh.id, jh.no_faktur, jh.customer, jh.total, jh.status, 
-		        jh.created_at, u.username, 
-		        COUNT(jd.id) as total_items`).
-		Joins("LEFT JOIN users u ON jh.user_id = u.id").
-		Joins("LEFT JOIN jual_details jd ON jh.id = jd.jual_header_id AND jd.deleted_at IS NULL").
-		Where("jh.deleted_at IS NULL").
-		Group("jh.id, jh.no_faktur, jh.customer, jh.total, jh.status, jh.created_at, u.username")
+	var headers []models.JualHeader
+	query := config.DB.Preload("User").Preload("Details.Barang", func(db *gorm.DB) *gorm.DB {
+		return db.Unscoped()
+	}).Preload("Details")
 
 	if startDate != "" && endDate != "" {
-		query = query.Where("DATE(jh.created_at) BETWEEN ? AND ?", startDate, endDate)
+		query = query.Where("DATE(created_at) BETWEEN ? AND ?", startDate, endDate)
+	}
+
+	if err := query.Order("created_at DESC").Find(&headers).Error; err != nil {
+		middlewares.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch data")
+		return
 	}
 
 	var results []LaporanPenjualanItem
-	if err := query.Order("jh.created_at DESC").Scan(&results).Error; err != nil {
-		middlewares.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch data")
-		return
+	for _, h := range headers {
+		var details []LaporanPenjualanDetailItem
+		for _, d := range h.Details {
+			namaBarang := d.NamaBarang
+			if namaBarang == "" && d.Barang.ID != 0 {
+				namaBarang = d.Barang.NamaBarang
+			}
+			details = append(details, LaporanPenjualanDetailItem{
+				NamaBarang: namaBarang,
+				Qty:        d.Qty,
+				Harga:      d.Harga,
+				Subtotal:   d.Subtotal,
+			})
+		}
+		results = append(results, LaporanPenjualanItem{
+			ID:         h.ID,
+			NoFaktur:   h.NoFaktur,
+			Customer:   h.Customer,
+			Total:      h.Total,
+			Status:     h.Status,
+			CreatedAt:  h.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Username:   h.User.Username,
+			TotalItems: len(h.Details),
+			Details:    details,
+		})
 	}
 
 	var grandTotal float64
@@ -122,23 +169,46 @@ func LaporanPembelian(w http.ResponseWriter, r *http.Request) {
 	startDate := r.URL.Query().Get("start_date")
 	endDate := r.URL.Query().Get("end_date")
 
-	query := config.DB.Table("beli_headers bh").
-		Select(`bh.id, bh.no_faktur, bh.supplier, bh.total, bh.status, 
-		        bh.created_at, u.username, 
-		        COUNT(bd.id) as total_items`).
-		Joins("LEFT JOIN users u ON bh.user_id = u.id").
-		Joins("LEFT JOIN beli_details bd ON bh.id = bd.beli_header_id AND bd.deleted_at IS NULL").
-		Where("bh.deleted_at IS NULL").
-		Group("bh.id, bh.no_faktur, bh.supplier, bh.total, bh.status, bh.created_at, u.username")
+	var headers []models.BeliHeader
+	query := config.DB.Preload("User").Preload("Details.Barang", func(db *gorm.DB) *gorm.DB {
+		return db.Unscoped()
+	}).Preload("Details")
 
 	if startDate != "" && endDate != "" {
-		query = query.Where("DATE(bh.created_at) BETWEEN ? AND ?", startDate, endDate)
+		query = query.Where("DATE(created_at) BETWEEN ? AND ?", startDate, endDate)
+	}
+
+	if err := query.Order("created_at DESC").Find(&headers).Error; err != nil {
+		middlewares.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch data")
+		return
 	}
 
 	var results []LaporanPembelianItem
-	if err := query.Order("bh.created_at DESC").Scan(&results).Error; err != nil {
-		middlewares.ErrorResponse(w, http.StatusInternalServerError, "Failed to fetch data")
-		return
+	for _, h := range headers {
+		var details []LaporanPembelianDetailItem
+		for _, d := range h.Details {
+			namaBarang := d.NamaBarang
+			if namaBarang == "" && d.Barang.ID != 0 {
+				namaBarang = d.Barang.NamaBarang
+			}
+			details = append(details, LaporanPembelianDetailItem{
+				NamaBarang: namaBarang,
+				Qty:        d.Qty,
+				Harga:      d.Harga,
+				Subtotal:   d.Subtotal,
+			})
+		}
+		results = append(results, LaporanPembelianItem{
+			ID:         h.ID,
+			NoFaktur:   h.NoFaktur,
+			Supplier:   h.Supplier,
+			Total:      h.Total,
+			Status:     h.Status,
+			CreatedAt:  h.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			Username:   h.User.Username,
+			TotalItems: len(h.Details),
+			Details:    details,
+		})
 	}
 
 	var grandTotal float64

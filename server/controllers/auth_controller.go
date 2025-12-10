@@ -43,12 +43,12 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	if err := config.DB.Where("username = ?", req.Username).First(&user).Error; err != nil {
-		middlewares.ErrorResponse(w, http.StatusUnauthorized, "Invalid credentials")
+		middlewares.ErrorResponse(w, http.StatusUnauthorized, "Invalid username/password")
 		return
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
-		middlewares.ErrorResponse(w, http.StatusUnauthorized, "Invalid credentials")
+		middlewares.ErrorResponse(w, http.StatusUnauthorized, "Invalid username/password")
 		return
 	}
 

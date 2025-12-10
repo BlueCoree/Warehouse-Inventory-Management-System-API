@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
+	"github.com/rs/cors"
 )
 
 func main() {
@@ -63,6 +64,8 @@ func main() {
 	api.HandleFunc("/pembelian", controllers.CreatePembelian).Methods("POST")
 	api.HandleFunc("/pembelian", controllers.GetAllPembelian).Methods("GET")
 	api.HandleFunc("/pembelian/{id}", controllers.GetDetailPembelian).Methods("GET")
+	api.HandleFunc("/pembelian/{id}/selesaikan", controllers.SelesaikanPembelian).Methods("PUT")
+	api.HandleFunc("/pembelian/{id}/cancel", controllers.CancelPembelian).Methods("PUT")
 
 	// Penjualan routes
 	api.HandleFunc("/penjualan", controllers.CreatePenjualan).Methods("POST")
@@ -79,6 +82,15 @@ func main() {
 		port = "8080"
 	}
 
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:5173"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowCredentials: true,
+	})
+
+	handler := c.Handler(router)
+
 	log.Printf("Server running on port %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, router))
+	log.Fatal(http.ListenAndServe(":"+port, handler))
 }

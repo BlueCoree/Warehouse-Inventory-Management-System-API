@@ -10,6 +10,16 @@ import (
 )
 
 func RunSeeder(db *gorm.DB) {
+	var count int64
+	db.Model(&models.User{}).Count(&count)
+
+	if count > 0 {
+		log.Println("Database sudah berisi data, skip seeding...")
+		return
+	}
+
+	log.Println("Memulai seeding data...")
+
 	if err := seedUsers(db); err != nil {
 		log.Fatal("Seeding Users Gagal:", err)
 	}
@@ -28,6 +38,8 @@ func RunSeeder(db *gorm.DB) {
 	if err := seedHistoryStok(db); err != nil {
 		log.Fatal("Seeding History Stok Gagal:", err)
 	}
+
+	log.Println("Seeding selesai!")
 }
 
 func seedUsers(db *gorm.DB) error {
